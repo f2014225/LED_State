@@ -5,14 +5,14 @@
 #include <compat/deprecated.h>
 #define BAUD 9600                                 // define baud
 #define BAUDRATE ((16000000)/(BAUD*16UL)-1)            // set baud rate value for UBRR,16000000 is the clock frequency
-static int lux_threshold;
-static int temp_threshold;
+static int lux_threshold_lower=0,lux_threshold_higher=0;    //to be set via setup policy
+static int temp_threshold=0;                                //to be set via setup policy
 volatile int count=0;
 int LDR_Value;
 volatile char command[4];
 char *lux1, *lux2, *temperature, *power;
-char bright = '0';
-char off='a'; // when LED has to be switched off
+char bright = 'a';
+char off='0'; // when LED has to be switched off
 uint16_t v,current,current_temp,current_lux;
 enum State{Fallback,Active,Waiting};
 State state=Fallback;
@@ -194,6 +194,16 @@ uint16_t get_temperature()
   UDR=*temperature;
   return(adc_result1);    //to compare with threshold limit;
 }
+uint16_t get_temperature_Fallback()
+
+{
+  uint16_t adc_result1;
+  ADCSRA &= ~((1<<ADEN));
+  InitADC();
+  _delay_ms(10);
+  adc_result1=ReadADC(4);
+  return(adc_result1);    //to compare with threshold limit;
+}
 uint16_t get_lux()
 {
   uint16_t adc_result1,adc_result2;
@@ -214,6 +224,22 @@ uint16_t get_lux()
   UDR = *lux2;
   return (adc_result1);      // assuming ambient lux sensor is connected to channel 2
 }
+uint16_t get_lux_Fallback()
+{
+  uint16_t adc_result1,adc_result2;
+  ADCSRA &= ~((1<<ADEN));
+  InitADC();
+  _delay_ms(10);
+  
+  adc_result1=ReadADC(2);
+  
+  ADCSRA &= ~((1<<ADEN));
+  InitADC();	
+  _delay_ms(10);
+  
+  adc_result2=ReadADC(0);
+  return (adc_result1);      // assuming ambient lux sensor is connected to channel 2
+}
 void get_power()
 {
   uint16_t adc_result1,adc_result2;
@@ -231,33 +257,33 @@ void get_power()
   itoa(adc_result3,power,10);
   UDR = *power;
 }
+void Setup_Policy()
+{
+  //setup policy
+}
 void setup()
-{  
-    pinMode(13,OUTPUT);
-    UBRRH = (BAUDRATE>>8);                      // shift the register right by 8 bits
-    UBRRL = BAUDRATE;                           // set baud rate
-    UCSRB  = (1<<TXEN)|(1<<RXEN);                // enable receiver and transmitter
-    UCSRC  = (1<<URSEL)|(1<<UCSZ0)|(1<<UCSZ1);   // 8bit data format
-    UCSRB |= (1<<RXCIE);
-    //set timer1 interrupt at 1Hz
-    TCCR1A = 0;// set entire TCCR1A register to 0
-    TCCR1B = 0;// same for TCCR1B
-    TCNT1  = 0;//initialize counter value to 0
-    // set compare match register for 1hz increments
-    OCR1A =15624;// = [(16*10^6) / (1*1024) - 1] (must be <65536) for 1 second 
-    // turn on CTC mode
-    TCCR1B |= (1 << WGM12);
-    // Set CS12 and CS10 bits for 1024 prescaler
-    TCCR1B |= (1 << CS12) | (1 << CS10);  
-    // enable timer compare interrupt
-    TIMSK |= (1 << OCIE1A);
-    sei();
-    ADMUX=(1<<REFS0);                         // For Aref=AVcc;
-    //ADMUX=(1<<REFS0);                         // For Aref=AVcc;
-    //ADMUX = (1<<REFS0)|(1<<ADLAR);
-    ADCSRA=(1<<ADEN)|(1<<ADPS2)|(1<<ADPS1)|(1<<ADPS0); //Prescalar div factor =128, pg
-    DDRB |= 0x3C; 
-    DDRD |= 0xFC;
+{
+  Setup_Policy();
+  UBRRH = (BAUDRATE>>8);                      // shift the register right by 8 bits
+  UBRRL = BAUDRATE;                           // set baud rate
+  UCSRB  = (1<<TXEN)|(1<<RXEN);                // enable receiver and transmitter
+  UCSRC  = (1<<URSEL)|(1<<UCSZ0)|(1<<UCSZ1);   // 8bit data format
+  UCSRB |= (1<<RXCIE);
+  //set timer1 interrupt at 1Hz
+  TCCR1A = 0;// set entire TCCR1A register to 0
+  TCCR1B = 0;// same for TCCR1B
+  TCNT1  = 0;//initialize counter value to 0
+  // set compare match register for 1hz increments
+  OCR1A =15624;// = [(16*10^6) / (1*1024) - 1] (must be <65536) for 1 second 
+  // turn on CTC mode
+  TCCR1B |= (1 << WGM12);
+  // Set CS12 and CS10 bits for 1024 prescaler
+  TCCR1B |= (1 << CS12) | (1 << CS10);  
+  // enable timer compare interrupt
+  TIMSK |= (1 << OCIE1A);
+  sei();
+  DDRB |= 0x3C; 
+  DDRD |= 0xFC;
 }
 void loop()
 { 
@@ -274,11 +300,20 @@ void loop()
     }
     case(Fallback):
     {
-      current_lux=get_lux();
-      if(current_lux<lux_threshold)
+      current_lux=get_lux_Fallback();
+      current_temp=get_temperature_Fallback();
+      if(current_lux<lux_threshold_lower)
       {
         set_brightness(bright);  
-      } 
+      }
+        if(current_lux>lux_threshold_higher)
+      {
+        set_brightness(off);  
+      }
+        if(current_temp<temp_threshold)
+      {
+        set_brightness(off);  
+      }
       break;
     }
     case(Waiting):
